@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-// Usamos fetch global de Node, no node-fetch
 
 dotenv.config();
 
@@ -16,37 +15,35 @@ app.get("/", (_req, res) => {
 });
 
 /**
- * Header de autenticación para Ecart Pay en PRODUCCIÓN.
- * Usa tu API key de producción y el esquema que indique su doc (normalmente Bearer).
+ * Construye el header de autenticación para Ecart Pay (producción).
+ * Usa API key de producción en ECART_API_KEY y esquema Bearer.
  */
 function getEcartAuthHeader() {
-    const apiKey = process.env.ECART_API_KEY; // API key de PRODUCCIÓN
+    const apiKey = process.env.ECART_API_KEY;
 
     if (!apiKey) {
         console.error("Falta ECART_API_KEY en variables de entorno (producción)");
         return null;
     }
 
-    // Ajusta si Ecart Pay usa otro esquema; lo usual es Bearer.
     return `Bearer ${apiKey}`;
 }
 
-// Mantengo la misma ruta para que el frontend no cambie:
 app.post("/api/clip/create-checkout", async(req, res) => {
     try {
         const { amount, placa, folio, estado, description } = req.body;
 
-        if (!amount || !placa || !folio) {
+        // Validación básica de entrada
+        const amountNumber = Number(amount);
+        if (!Number.isFinite(amountNumber) || amountNumber <= 0 || !placa || !folio) {
             return res.status(400).json({
                 success: false,
-                error: "Datos incompletos para crear la orden.",
+                error: "Datos incompletos o monto inválido para crear la orden.",
             });
         }
 
-        // URL base de PRODUCCIÓN de Ecart Pay
-        const ecartBaseUrl =
-            process.env.ECART_BASE_URL || "https://ecartpay.com";
-
+        // URL base de producción de Ecart Pay
+        const ecartBaseUrl = process.env.ECART_BASE_URL || "https://ecartpay.com";
         const authHeader = getEcartAuthHeader();
 
         if (!ecartBaseUrl || !authHeader) {
@@ -57,26 +54,36 @@ app.post("/api/clip/create-checkout", async(req, res) => {
             });
         }
 
-        // Orden para Ecart Pay (producción).
+        // IMPORTANTE: sustituye estas URLs por las reales de tu backend/frontend
+        const notifyUrl =
+            process.env.ECART_NOTIFY_URL ||
+            "https://backend-ecartpay.onrender.com/api/ecart/webhook";
+
+        const successUrl = `https://guiatenenciamx.mx/pago-exitoso?placa=${encodeURIComponent(
+      placa
+    )}&folio=${encodeURIComponent(folio)}`;
+
+        const errorUrl = `https://guiatenenciamx.mx/pago-error?placa=${encodeURIComponent(
+      placa
+    )}&folio=${encodeURIComponent(folio)}`;
+
+        // Orden para Ecart Pay (producción) — incluye customer.email que pide la API
         const body = {
             currency: "MXN",
             customer: {
                 name: "Cliente Control Vehicular",
-                // Agrega aquí email/phone si los tienes.
+                email: "cliente@guiatenenciamx.mx", // usa un email válido para tu negocio
             },
             items: [{
                 name: description ||
                     `Pago control vehicular ${placa} - folio ${folio}`,
                 quantity: 1,
-                price: Number(amount),
+                price: amountNumber,
             }, ],
-            // URL donde Ecart Pay enviará notificaciones de pago
-            notify_url: process.env.ECART_NOTIFY_URL ||
-                "https://TU_BACKEND_URL/api/ecart/webhook",
-            // URLs de redirección para el cliente
+            notify_url: notifyUrl,
             redirect_url: {
-                success: `https://tu-dominio.com/pago-exitoso?placa=${placa}&folio=${folio}`,
-                error: `https://tu-dominio.com/pago-error?placa=${placa}&folio=${folio}`,
+                success: successUrl,
+                error: errorUrl,
             },
             metadata: {
                 placa,
@@ -84,6 +91,8 @@ app.post("/api/clip/create-checkout", async(req, res) => {
                 estado,
             },
         };
+
+        console.log("Body enviado a Ecart:", JSON.stringify(body));
 
         const ecartRes = await fetch(`${ecartBaseUrl}/api/orders`, {
             method: "POST",
@@ -97,21 +106,29 @@ app.post("/api/clip/create-checkout", async(req, res) => {
 
         console.log("Respuesta Ecart (prod) status:", ecartRes.status);
 
-        const ecartData = await ecartRes.json();
+        let ecartData;
+        try {
+            ecartData = await ecartRes.json();
+        } catch (e) {
+            console.error("No se pudo parsear JSON de Ecart:", e);
+            ecartData = null;
+        }
+
         console.log("Respuesta Ecart (prod) JSON:", ecartData);
 
         if (!ecartRes.ok) {
-            const errorMsg = ecartData?.error || JSON.stringify(ecartData);
+            const errorMsg =
+                (ecartData && ecartData.error) || JSON.stringify(ecartData);
             console.error("Error Ecart (prod):", ecartRes.status, errorMsg);
             return res.status(502).json({
                 success: false,
-                error: ecartData?.error ||
+                error:
+                    (ecartData && ecartData.error) ||
                     "Error al comunicarse con Ecart Pay en producción.",
             });
         }
 
-        // En producción, el link de pago sigue siendo el pay_link de la orden. [web:96]
-        const checkoutUrl = ecartData.pay_link;
+        const checkoutUrl = ecartData && ecartData.pay_link;
 
         if (!checkoutUrl) {
             console.error("Ecart Pay (prod) no devolvió pay_link");
