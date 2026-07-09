@@ -33,7 +33,17 @@ function getEcartAuthHeader() {
 
 app.post("/api/clip/create-checkout", async(req, res) => {
     try {
-        const { amount, placa, folio, estado, description } = req.body;
+        const {
+            amount,
+            placa,
+            folio,
+            estado,
+            description,
+            customerEmail,
+            customerPhone,
+            customerFirstName,
+            customerLastName,
+        } = req.body;
 
         const amountNumber = Number(amount);
         if (!Number.isFinite(amountNumber) || amountNumber <= 0 || !placa || !folio) {
@@ -60,24 +70,24 @@ app.post("/api/clip/create-checkout", async(req, res) => {
             "https://backend-ecartpay.onrender.com/api/ecart/webhook";
 
         const redirectUrl = `https://guiatenenciamx.mx/pago-exitoso?placa=${encodeURIComponent(
-      placa
+      placa,
     )}&folio=${encodeURIComponent(folio)}`;
 
-        // Datos de cliente al nivel raíz, siguiendo el ejemplo de Ecart
-        const clientEmail = "cliente@guiatenenciamx.mx";
-        const clientFirstName = "Cliente";
-        const clientLastName = "Control Vehicular";
-        const clientPhone = "5555555555"; // pon un número válido según tu caso
+        // Datos de cliente al nivel raíz: usar los que vienen del frontend, con fallback
+        const email = customerEmail || "cliente@guiatenenciamx.mx";
+        const firstName = customerFirstName || "Cliente";
+        const lastName = customerLastName || "Control Vehicular";
+        const phone = customerPhone || "5555555555";
 
         // Orden para Ecart Pay (producción), alineada al ejemplo curl
         const body = {
             currency: "MXN",
 
             // Datos del cliente al nivel raíz
-            email: clientEmail,
-            first_name: clientFirstName,
-            last_name: clientLastName,
-            phone: clientPhone,
+            email,
+            first_name: firstName,
+            last_name: lastName,
+            phone,
 
             items: [{
                 name: description ||
