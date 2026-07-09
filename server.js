@@ -16,9 +16,8 @@ app.get("/", (_req, res) => {
 
 /**
  * Construye el header de autenticación para Ecart Pay (producción).
- * Usa API key de producción en ECART_API_KEY tal como te la da Ecart.
- * Si tu token ya es el JWT completo (no requiere "Bearer "), puedes usarlo directo.
- * Si la doc indica "Authorization: Bearer <token>", ajusta aquí.
+ * Usa ECART_API_KEY tal como te lo da Ecart, igual que en tu curl:
+ *   Authorization: <token>
  */
 function getEcartAuthHeader() {
     const apiKey = process.env.ECART_API_KEY;
@@ -28,12 +27,8 @@ function getEcartAuthHeader() {
         return null;
     }
 
-    // Si Ecart te da el token tal cual como en el curl (sin "Bearer "),
-    // usa esto:
-    // return apiKey;
-    //
-    // Si la doc indica "Bearer <token>", usa esto:
-    return `Bearer ${apiKey}`;
+    // Igual que tu ejemplo curl: Authorization: <token>
+    return apiKey;
 }
 
 app.post("/api/clip/create-checkout", async(req, res) => {
@@ -48,6 +43,7 @@ app.post("/api/clip/create-checkout", async(req, res) => {
             });
         }
 
+        // Usa sandbox o producción según tu entorno
         const ecartBaseUrl = process.env.ECART_BASE_URL || "https://ecartpay.com";
         const authHeader = getEcartAuthHeader();
 
@@ -63,21 +59,17 @@ app.post("/api/clip/create-checkout", async(req, res) => {
             process.env.ECART_NOTIFY_URL ||
             "https://backend-ecartpay.onrender.com/api/ecart/webhook";
 
-        const successUrl = `https://guiatenenciamx.mx/pago-exitoso?placa=${encodeURIComponent(
+        const redirectUrl = `https://guiatenenciamx.mx/pago-exitoso?placa=${encodeURIComponent(
       placa
     )}&folio=${encodeURIComponent(folio)}`;
 
-        const errorUrl = `https://guiatenenciamx.mx/pago-error?placa=${encodeURIComponent(
-      placa
-    )}&folio=${encodeURIComponent(folio)}`;
-
-        // Datos "cliente" al nivel raíz, siguiendo el ejemplo de Ecart
+        // Datos de cliente al nivel raíz, siguiendo el ejemplo de Ecart
         const clientEmail = "cliente@guiatenenciamx.mx";
         const clientFirstName = "Cliente";
         const clientLastName = "Control Vehicular";
-        const clientPhone = "5555555555"; // pon un número válido o el que tengas configurado
+        const clientPhone = "5555555555"; // pon un número válido según tu caso
 
-        // Orden para Ecart Pay (producción), alineada al ejemplo de curl
+        // Orden para Ecart Pay (producción), alineada al ejemplo curl
         const body = {
             currency: "MXN",
 
@@ -92,27 +84,20 @@ app.post("/api/clip/create-checkout", async(req, res) => {
                     `Pago control vehicular ${placa} - folio ${folio}`,
                 price: amountNumber,
                 quantity: 1,
-                // Opcionales: discount, is_service
-                // discount: 0,
-                // is_service: true,
             }, ],
 
             notify_url: notifyUrl,
 
-            // Ecart usará redirect_url para enviar al cliente de vuelta
-            redirect_url: {
-                success: successUrl,
-                error: errorUrl,
-            },
+            // redirect_url DEBE SER UN STRING según el error de la API
+            redirect_url: redirectUrl,
 
-            // Datos adicionales de referencia (usamos metafields como en el ejemplo)
+            // Datos adicionales de referencia
             metafields: {
                 placa,
                 folio,
                 estado,
             },
 
-            // Opcionales, si quieres referencias internas
             reference_id: folio,
             reference: `control_vehicular_${placa}_${folio}`,
         };
@@ -123,7 +108,7 @@ app.post("/api/clip/create-checkout", async(req, res) => {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                Authorization: authHeader,
+                Authorization: authHeader, // aquí va el token directo
                 accept: "application/json",
             },
             body: JSON.stringify(body),
