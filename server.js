@@ -16,7 +16,9 @@ app.get("/", (_req, res) => {
 
 /**
  * Construye el header de autenticación para Ecart Pay (producción).
- * Usa API key de producción en ECART_API_KEY y esquema Bearer.
+ * Usa API key de producción en ECART_API_KEY tal como te la da Ecart.
+ * Si tu token ya es el JWT completo (no requiere "Bearer "), puedes usarlo directo.
+ * Si la doc indica "Authorization: Bearer <token>", ajusta aquí.
  */
 function getEcartAuthHeader() {
     const apiKey = process.env.ECART_API_KEY;
@@ -26,6 +28,11 @@ function getEcartAuthHeader() {
         return null;
     }
 
+    // Si Ecart te da el token tal cual como en el curl (sin "Bearer "),
+    // usa esto:
+    // return apiKey;
+    //
+    // Si la doc indica "Bearer <token>", usa esto:
     return `Bearer ${apiKey}`;
 }
 
@@ -33,7 +40,6 @@ app.post("/api/clip/create-checkout", async(req, res) => {
     try {
         const { amount, placa, folio, estado, description } = req.body;
 
-        // Validación básica de entrada
         const amountNumber = Number(amount);
         if (!Number.isFinite(amountNumber) || amountNumber <= 0 || !placa || !folio) {
             return res.status(400).json({
@@ -42,7 +48,6 @@ app.post("/api/clip/create-checkout", async(req, res) => {
             });
         }
 
-        // URL base de producción de Ecart Pay
         const ecartBaseUrl = process.env.ECART_BASE_URL || "https://ecartpay.com";
         const authHeader = getEcartAuthHeader();
 
@@ -54,7 +59,6 @@ app.post("/api/clip/create-checkout", async(req, res) => {
             });
         }
 
-        // IMPORTANTE: sustituye estas URLs por las reales de tu backend/frontend
         const notifyUrl =
             process.env.ECART_NOTIFY_URL ||
             "https://backend-ecartpay.onrender.com/api/ecart/webhook";
@@ -67,29 +71,50 @@ app.post("/api/clip/create-checkout", async(req, res) => {
       placa
     )}&folio=${encodeURIComponent(folio)}`;
 
-        // Orden para Ecart Pay (producción) — incluye customer.email que pide la API
+        // Datos "cliente" al nivel raíz, siguiendo el ejemplo de Ecart
+        const clientEmail = "cliente@guiatenenciamx.mx";
+        const clientFirstName = "Cliente";
+        const clientLastName = "Control Vehicular";
+        const clientPhone = "5555555555"; // pon un número válido o el que tengas configurado
+
+        // Orden para Ecart Pay (producción), alineada al ejemplo de curl
         const body = {
             currency: "MXN",
-            customer: {
-                name: "Cliente Control Vehicular",
-                email: "cliente@guiatenenciamx.mx", // usa un email válido para tu negocio
-            },
+
+            // Datos del cliente al nivel raíz
+            email: clientEmail,
+            first_name: clientFirstName,
+            last_name: clientLastName,
+            phone: clientPhone,
+
             items: [{
                 name: description ||
                     `Pago control vehicular ${placa} - folio ${folio}`,
-                quantity: 1,
                 price: amountNumber,
+                quantity: 1,
+                // Opcionales: discount, is_service
+                // discount: 0,
+                // is_service: true,
             }, ],
+
             notify_url: notifyUrl,
+
+            // Ecart usará redirect_url para enviar al cliente de vuelta
             redirect_url: {
                 success: successUrl,
                 error: errorUrl,
             },
-            metadata: {
+
+            // Datos adicionales de referencia (usamos metafields como en el ejemplo)
+            metafields: {
                 placa,
                 folio,
                 estado,
             },
+
+            // Opcionales, si quieres referencias internas
+            reference_id: folio,
+            reference: `control_vehicular_${placa}_${folio}`,
         };
 
         console.log("Body enviado a Ecart:", JSON.stringify(body));
