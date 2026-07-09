@@ -101,11 +101,11 @@ app.post("/api/clip/create-checkout", async(req, res) => {
         console.log("Respuesta Ecart (prod) JSON:", ecartData);
 
         if (!ecartRes.ok) {
-            const errorMsg = ecartData ? .error || JSON.stringify(ecartData);
+            const errorMsg = ecartData?.error || JSON.stringify(ecartData);
             console.error("Error Ecart (prod):", ecartRes.status, errorMsg);
             return res.status(502).json({
                 success: false,
-                error: ecartData ? .error ||
+                error: ecartData?.error ||
                     "Error al comunicarse con Ecart Pay en producción.",
             });
         }
