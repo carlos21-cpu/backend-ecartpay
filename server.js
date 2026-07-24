@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import { MercadoPagoConfig, Preference } from "mercadopago";
 
 dotenv.config();
 
@@ -10,28 +11,22 @@ const PORT = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 
+// Configuración Mercado Pago (usa tu Access Token real)
+const mpClient = new MercadoPagoConfig({
+    accessToken: process.env.MP_ACCESS_TOKEN || "",
+});
+
+// Ping simple
 app.get("/", (_req, res) => {
-    res.json({ ok: true, message: "Backend Ecart Pay (producción) funcionando" });
+    res.json({ ok: true, message: "Backend Mercado Pago funcionando" });
 });
 
 /**
- * Construye el header de autenticación para Ecart Pay (producción).
- * Usa ECART_API_KEY tal como te lo da Ecart, igual que en tu curl:
- *   Authorization: <token>
+ * Endpoint que reemplaza a /api/clip/create-checkout
+ * Crea una preferencia en Mercado Pago y devuelve el init_point para redirigir al checkout.
+ * El frontend ya está mandando: amount, placa, folio, estado, description, customerEmail, etc.
  */
-function getEcartAuthHeader() {
-    const apiKey = process.env.ECART_API_KEY;
-
-    if (!apiKey) {
-        console.error("Falta ECART_API_KEY en variables de entorno (producción)");
-        return null;
-    }
-
-    // Igual que tu ejemplo curl: Authorization: <token>
-    return apiKey;
-}
-
-app.post("/api/clip/create-checkout", async(req, res) => {
+app.post("/api/mp/create-preference", async(req, res) => {
     try {
         const {
             amount,
@@ -46,131 +41,115 @@ app.post("/api/clip/create-checkout", async(req, res) => {
         } = req.body;
 
         const amountNumber = Number(amount);
-        if (!Number.isFinite(amountNumber) || amountNumber <= 0 || !placa || !folio) {
+
+        if (!Number.isFinite(amountNumber) ||
+            amountNumber <= 0 ||
+            !placa ||
+            !folio
+        ) {
             return res.status(400).json({
                 success: false,
-                error: "Datos incompletos o monto inválido para crear la orden.",
+                error: "Datos incompletos o monto inválido para crear la preferencia.",
             });
         }
 
-        // Usa sandbox o producción según tu entorno
-        const ecartBaseUrl = process.env.ECART_BASE_URL || "https://ecartpay.com";
-        const authHeader = getEcartAuthHeader();
-
-        if (!ecartBaseUrl || !authHeader) {
-            console.error("Falta ECART_BASE_URL o token de autenticación de Ecart Pay");
+        if (!process.env.MP_ACCESS_TOKEN) {
+            console.error("Falta MP_ACCESS_TOKEN en variables de entorno");
             return res.status(500).json({
                 success: false,
-                error: "Configuración incompleta de Ecart Pay.",
+                error: "Configuración incompleta de Mercado Pago.",
             });
         }
 
-        const notifyUrl =
-            process.env.ECART_NOTIFY_URL ||
-            "https://backend-ecartpay.onrender.com/api/ecart/webhook";
+        // URLs de retorno (puedes ponerlas en env o dejarlas así al inicio)
+        const successUrl =
+            process.env.MP_BACK_URL_SUCCESS ||
+            `https://guiatenenciamx.mx/pago-exitoso?placa=${encodeURIComponent(
+        placa,
+      )}&folio=${encodeURIComponent(folio)}`;
+        const failureUrl =
+            process.env.MP_BACK_URL_FAILURE ||
+            "https://guiatenenciamx.mx/pago-fallido";
+        const pendingUrl =
+            process.env.MP_BACK_URL_PENDING ||
+            "https://guiatenenciamx.mx/pago-pendiente";
 
-        const redirectUrl = `https://guiatenenciamx.mx/pago-exitoso?placa=${encodeURIComponent(
-      placa,
-    )}&folio=${encodeURIComponent(folio)}`;
-
-        // Datos de cliente al nivel raíz: usar los que vienen del frontend, con fallback
         const email = customerEmail || "cliente@guiatenenciamx.mx";
         const firstName = customerFirstName || "Cliente";
         const lastName = customerLastName || "Control Vehicular";
-        const phone = customerPhone || "5555555555";
+        const phoneNumber = customerPhone || "5555555555";
 
-        // Orden para Ecart Pay (producción), alineada al ejemplo curl
+        const preference = new Preference(mpClient);
+
         const body = {
-            currency: "MXN",
-
-            // Datos del cliente al nivel raíz
-            email,
-            first_name: firstName,
-            last_name: lastName,
-            phone,
-
             items: [{
-                name: description ||
+                title: description ||
                     `Pago control vehicular ${placa} - folio ${folio}`,
-                price: amountNumber,
                 quantity: 1,
+                unit_price: amountNumber,
+                currency_id: "MXN",
             }, ],
-
-            notify_url: notifyUrl,
-
-            // redirect_url DEBE SER UN STRING según el error de la API
-            redirect_url: redirectUrl,
-
-            // Datos adicionales de referencia
-            metafields: {
+            payer: {
+                name: firstName,
+                surname: lastName,
+                email,
+                phone: {
+                    area_code: "",
+                    number: phoneNumber,
+                },
+            },
+            back_urls: {
+                success: successUrl,
+                failure: failureUrl,
+                pending: pendingUrl,
+            },
+            auto_return: "approved",
+            external_reference: folio,
+            metadata: {
                 placa,
                 folio,
                 estado,
             },
-
-            reference_id: folio,
-            reference: `control_vehicular_${placa}_${folio}`,
         };
 
-        console.log("Body enviado a Ecart:", JSON.stringify(body));
+        console.log("Body enviado a Mercado Pago:", JSON.stringify(body));
 
-        const ecartRes = await fetch(`${ecartBaseUrl}/api/orders`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: authHeader, // aquí va el token directo
-                accept: "application/json",
-            },
-            body: JSON.stringify(body),
-        });
+        const result = await preference.create({ body });
 
-        console.log("Respuesta Ecart (prod) status:", ecartRes.status);
+        console.log(
+            "Preferencia MP creada:",
+            result.id,
+            result.init_point,
+            result.sandbox_init_point,
+        );
 
-        let ecartData;
-        try {
-            ecartData = await ecartRes.json();
-        } catch (e) {
-            console.error("No se pudo parsear JSON de Ecart:", e);
-            ecartData = null;
-        }
+        const initPoint = result.init_point || result.sandbox_init_point;
 
-        console.log("Respuesta Ecart (prod) JSON:", ecartData);
-
-        if (!ecartRes.ok) {
-            const errorMsg =
-                (ecartData && ecartData.error) || JSON.stringify(ecartData);
-            console.error("Error Ecart (prod):", ecartRes.status, errorMsg);
-            return res.status(502).json({
-                success: false,
-                error:
-                    (ecartData && ecartData.error) ||
-                    "Error al comunicarse con Ecart Pay en producción.",
-            });
-        }
-
-        const checkoutUrl = ecartData && ecartData.pay_link;
-
-        if (!checkoutUrl) {
-            console.error("Ecart Pay (prod) no devolvió pay_link");
+        if (!initPoint) {
+            console.error("Mercado Pago no devolvió init_point");
             return res.status(500).json({
                 success: false,
-                error: "Ecart Pay no devolvió un enlace de pago.",
+                error: "Mercado Pago no devolvió un enlace de pago.",
             });
         }
 
+        // Devolvemos el link al frontend
         return res.json({
             success: true,
-            checkout_url: checkoutUrl,
+            init_point: initPoint,
+            preferenceId: result.id,
         });
     } catch (err) {
-        console.error("Error create-checkout (prod):", err);
+        console.error("Error MP create-preference:", err);
         return res.status(500).json({
             success: false,
-            error: "Error interno al crear el enlace de pago.",
+            error: "Error interno al crear la preferencia de pago.",
         });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Servidor producción escuchando en http://localhost:${PORT}`);
+    console.log(
+        `Servidor Mercado Pago escuchando en http://localhost:${PORT}`,
+    );
 });
